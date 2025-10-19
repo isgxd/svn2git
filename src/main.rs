@@ -1,8 +1,8 @@
 use clap::Parser;
 
 use svn2git::{
-    Cli, Commands, DiskStorage, HistoryCommands, HistoryManager, Result, SyncTool,
-    select_or_create_config_default,
+    Cli, Commands, DefaultUserInteractor, DiskStorage, HistoryCommands, HistoryManager, Result,
+    SyncTool, select_or_create_config_with_interactor,
 };
 
 fn main() -> Result<()> {
@@ -13,8 +13,16 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Sync { svn_dir, git_dir } => {
-            let config = select_or_create_config_default(svn_dir, git_dir, &mut history)?;
-            let tool = SyncTool::new(config, history);
+            let interactor = DefaultUserInteractor;
+            let config = select_or_create_config_with_interactor(
+                svn_dir,
+                git_dir,
+                &mut history,
+                &interactor,
+            )?;
+            let interactor = Box::new(DefaultUserInteractor);
+            let git_operations = Box::new(config.create_git_operations());
+            let tool = SyncTool::new(config, history, interactor, git_operations);
             tool.run()?;
         }
         Commands::History { command } => match command {

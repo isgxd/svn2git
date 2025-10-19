@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     config::reocrd::{self, HistoryRecord},
-    error::Result,
+    error::{Result, SyncError},
 };
 
 /// 配置文件
@@ -69,7 +69,10 @@ impl<S: FileStorage> HistoryManager<S> {
     ///
     /// 如果删除成功，返回 `Ok(())`，否则返回 `Err(SyncError::ConfigError(String))`
     pub fn remove_record(&mut self, index: usize) -> Result<()> {
-        self.records.retain(|r| !r.id_eq(index));
+        if index >= self.records.len() {
+            return Err(SyncError::App("索引超出范围".into()));
+        }
+        self.records.remove(index);
         println!("已删除记录 {index}");
         self.save()
     }
@@ -104,7 +107,8 @@ mod tests {
         fs::create_dir(&svn_path).unwrap();
         fs::create_dir(&git_path).unwrap();
 
-        let disk = MockFileStorage::new();
+        let mut disk = MockFileStorage::new();
+        disk.expect_load().returning(|| Ok(vec![]));
         let mut config = HistoryManager::new(disk).unwrap();
         config.add_record(svn_path.clone(), git_path.clone());
 
@@ -114,7 +118,9 @@ mod tests {
 
     #[test]
     fn test_remove_pair() {
-        let disk = MockFileStorage::new();
+        let mut disk = MockFileStorage::new();
+        disk.expect_load().returning(|| Ok(vec![]));
+        disk.expect_save().returning(|_| Ok(()));
         let mut config = HistoryManager::new(disk).unwrap();
         config.add_record(PathBuf::from("svn1"), PathBuf::from("git1"));
         config.add_record(PathBuf::from("svn2"), PathBuf::from("git2"));

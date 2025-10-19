@@ -4,16 +4,60 @@ use chrono::{DateTime, Local, Utc};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ops::{GitOperationsFactory, ProviderType};
+
 /// 同步配置
 pub struct SyncConfig {
     pub svn_dir: PathBuf,
     pub git_dir: PathBuf,
+    pub git_provider: ProviderType,
 }
 
 impl SyncConfig {
     /// 创建一个新的同步配置
+    ///
+    /// # 参数
+    ///
+    /// * `svn_dir` - SVN目录路径
+    /// * `git_dir` - Git目录路径
     pub fn new(svn_dir: PathBuf, git_dir: PathBuf) -> Self {
-        Self { svn_dir, git_dir }
+        let git_provider = GitOperationsFactory::create_from_env();
+        Self {
+            svn_dir,
+            git_dir,
+            git_provider: match git_provider {
+                crate::ops::GitProvider::Real(_) => ProviderType::Real,
+                crate::ops::GitProvider::Mock(_) => ProviderType::Mock,
+            },
+        }
+    }
+
+    /// 创建指定Git提供者的同步配置
+    ///
+    /// # 参数
+    ///
+    /// * `svn_dir` - SVN目录路径
+    /// * `git_dir` - Git目录路径
+    /// * `git_provider` - Git提供者类型
+    pub fn with_git_provider(
+        svn_dir: PathBuf,
+        git_dir: PathBuf,
+        git_provider: ProviderType,
+    ) -> Self {
+        Self {
+            svn_dir,
+            git_dir,
+            git_provider,
+        }
+    }
+
+    /// 获取Git操作实例
+    ///
+    /// # 返回值
+    ///
+    /// 返回配置的Git操作实例
+    pub fn create_git_operations(&self) -> crate::ops::GitProvider {
+        GitOperationsFactory::create(self.git_provider.clone())
     }
 }
 
@@ -81,6 +125,7 @@ impl HistoryRecord {
 
     /// 转换为 `SyncConfig`
     pub fn to_sync_config(&self) -> SyncConfig {
+        // 对于历史记录，我们使用默认的Git提供者（从环境变量读取）
         SyncConfig::new(self.svn_path.clone(), self.git_path.clone())
     }
 }

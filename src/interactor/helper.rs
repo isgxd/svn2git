@@ -7,13 +7,14 @@ use crate::{
 
 use std::{path::PathBuf, str::FromStr};
 
-/// 选择或创建配置
+/// 选择或创建配置（使用默认用户交互器）
 ///
 /// # 参数
 ///
 /// * `svn_dir`: SVN 本地目录
 /// * `git_dir`: Git 本地目录
 /// * `history`: 历史记录
+#[deprecated(note = "使用 select_or_create_config_with_interactor 以获得更好的可测试性")]
 pub fn select_or_create_config_default(
     svn_dir: Option<PathBuf>,
     git_dir: Option<PathBuf>,
@@ -23,18 +24,86 @@ pub fn select_or_create_config_default(
     select_or_create_config(svn_dir, git_dir, history, &interactor)
 }
 
-/// 确认是否同步
+/// 选择或创建配置（使用自定义用户交互器）
+///
+/// # 参数
+///
+/// * `svn_dir`: SVN 本地目录
+/// * `git_dir`: Git 本地目录
+/// * `history`: 历史记录
+/// * `interactor`: 用户交互器
+///
+/// # 返回
+///
+/// 同步配置
+///
+/// # 示例
+///
+/// ```ignore
+/// use svn2git::{select_or_create_config_with_interactor, HistoryManager, SyncConfig};
+/// use svn2git::{UserInteractor, TestUserInteractor};
+/// use std::path::PathBuf;
+///
+/// let mut history = HistoryManager::new();
+/// let interactor = TestUserInteractor::new();
+/// let config = select_or_create_config_with_interactor(
+///     Some(PathBuf::from("svn")),
+///     Some(PathBuf::from("git")),
+///     &mut history,
+///     &interactor
+/// )?;
+/// ```
+pub fn select_or_create_config_with_interactor<S: FileStorage>(
+    svn_dir: Option<PathBuf>,
+    git_dir: Option<PathBuf>,
+    history: &mut HistoryManager<S>,
+    interactor: &dyn UserInteractor,
+) -> Result<SyncConfig> {
+    select_or_create_config(svn_dir, git_dir, history, interactor)
+}
+
+/// 确认是否同步（使用默认用户交互器）
 ///
 /// # 参数
 ///
 /// * `svn_logs`: SVN 日志列表
-/// * `git_log`: Git 日志
 ///
 /// # 返回
 ///
 /// 是否同步
+#[deprecated(note = "使用 confirm_sync_with_interactor 以获得更好的可测试性")]
 pub fn confirm_sync(svn_logs: &[SvnLog]) -> bool {
     let interactor = DefaultUserInteractor;
+    interactor.confirm_sync(svn_logs)
+}
+
+/// 确认是否同步（使用自定义用户交互器）
+///
+/// # 参数
+///
+/// * `svn_logs`: SVN 日志列表
+/// * `interactor`: 用户交互器
+///
+/// # 返回
+///
+/// 是否同步
+///
+/// # 示例
+///
+/// ```ignore
+/// use svn2git::{confirm_sync_with_interactor, TestUserInteractor, SvnLog};
+/// use svn2git::UserInteractor;
+///
+/// let interactor = TestUserInteractor::new().with_confirm_result(true);
+/// let svn_logs = vec![SvnLog {
+///     version: "1".into(),
+///     message: "测试提交".into(),
+/// }];
+///
+/// let should_sync = confirm_sync_with_interactor(&svn_logs, &interactor);
+/// assert!(should_sync);
+/// ```
+pub fn confirm_sync_with_interactor(svn_logs: &[SvnLog], interactor: &dyn UserInteractor) -> bool {
     interactor.confirm_sync(svn_logs)
 }
 
