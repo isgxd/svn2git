@@ -64,7 +64,9 @@ fn parse_svn_log_xml(xml: &[u8]) -> Result<Vec<SvnLog>> {
 
         let message = get_svn_msg(entry);
         if message.is_empty() {
-            return Err(SyncError::App("日志条目中缺少 msg 属性".into()));
+            // 允许空消息，但记录警告
+            // 某些SVN提交可能确实为空消息，这是合法的
+            println!("警告: SVN版本 {} 的提交消息为空", version);
         }
 
         logs.push(SvnLog { version, message });

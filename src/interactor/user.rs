@@ -71,11 +71,14 @@ impl UserInteractor for DefaultUserInteractor {
             println!("{log:?}");
         }
 
-        Confirm::new("是否执行同步？")
-            .with_default(false)
-            .prompt()
-            .inspect_err(|e| eprintln!("询问是否同步时出现错误：{e}"))
-            .unwrap_or(false)
+        match Confirm::new("是否执行同步？").with_default(false).prompt() {
+            Ok(confirm) => confirm,
+            Err(e) => {
+                eprintln!("询问是否同步时出现错误：{e}");
+                eprintln!("由于交互错误，将取消同步操作以确保安全");
+                false // 安全默认值：出错时取消同步，避免意外操作
+            }
+        }
     }
 }
 

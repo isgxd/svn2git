@@ -142,12 +142,13 @@ pub fn print_title() {
 
 impl Display for HistoryRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 使用 to_string_lossy() 安全地处理路径，避免非UTF-8字符导致的panic
         write!(
             f,
             "{} \t{} \t{} \t{}",
             self.id,
-            self.svn_path.to_str().unwrap(),
-            self.git_path.to_str().unwrap(),
+            self.svn_path.to_string_lossy(),
+            self.git_path.to_string_lossy(),
             self.last_used
                 .with_timezone(&Local)
                 .format("%Y-%m-%d %H:%M:%S")
