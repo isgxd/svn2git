@@ -39,7 +39,8 @@ pub fn get_svn_logs(path: &PathBuf) -> Result<Vec<SvnLog>> {
         )));
     }
 
-    parse_svn_log_xml(&output.stdout)
+    let logs = parse_svn_log_xml(&output.stdout)?;
+    Ok(exclude_current_base_log(logs))
 }
 
 /// 解析 SVN 日志 XML
@@ -116,9 +117,20 @@ pub fn svn_update_to_rev(path: &PathBuf, rev: &str) -> Result<()> {
     Ok(())
 }
 
+/// 排除当前工作副本 BASE 对应的日志条目
+///
+/// `svn log -r BASE:HEAD` 的第一条通常是当前 BASE 修订版本，
+/// 这条往往已同步，不应再次进入同步队列。
+fn exclude_current_base_log(mut logs: Vec<SvnLog>) -> Vec<SvnLog> {
+    if !logs.is_empty() {
+        logs.remove(0);
+    }
+    logs
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_svn_log_xml;
+    use super::{SvnLog, exclude_current_base_log, parse_svn_log_xml};
 
     #[test]
     fn test_parse_svn_log_xml_success() {
@@ -183,5 +195,28 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].version, "200");
         assert!(result[0].message.is_empty());
+    }
+
+    #[test]
+    fn test_exclude_current_base_log_should_drop_first_entry() {
+        let logs = vec![
+            SvnLog {
+                version: "10".into(),
+                message: "base".into(),
+            },
+            SvnLog {
+                version: "11".into(),
+                message: "next".into(),
+            },
+        ];
+        let filtered = exclude_current_base_log(logs);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].version, "11");
+    }
+
+    #[test]
+    fn test_exclude_current_base_log_empty_input() {
+        let filtered = exclude_current_base_log(Vec::new());
+        assert!(filtered.is_empty());
     }
 }

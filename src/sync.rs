@@ -125,11 +125,12 @@ impl<S: FileStorage> SyncTool<S> {
             );
             for (idx, log) in svn_logs.iter().enumerate() {
                 println!(
-                    "[预览 {}/{}] r{} | {}",
+                    "[预览 {}/{}] r{} | {} | Git提交: {}",
                     idx + 1,
                     svn_logs.len(),
                     log.version,
-                    summarize_message(&log.message)
+                    summarize_message(&log.message),
+                    build_git_commit_message(&log.message)
                 );
             }
             return Ok(());
@@ -173,7 +174,7 @@ impl<S: FileStorage> SyncTool<S> {
             git_commit_with_ops(
                 self.git_operations.as_ref(),
                 &self.config.git_dir,
-                &format!("SVN: {}", &log.message),
+                &build_git_commit_message(&log.message),
             )
             .map_err(|e| {
                 SyncError::App(format!(
@@ -183,7 +184,12 @@ impl<S: FileStorage> SyncTool<S> {
                     e
                 ))
             })?;
-            println!("[{}/{}] Git 提交完成", idx + 1, svn_logs.len());
+            println!(
+                "[{}/{}] Git 提交完成：{}",
+                idx + 1,
+                svn_logs.len(),
+                build_git_commit_message(&log.message)
+            );
         }
 
         self.history.save()
@@ -217,6 +223,10 @@ fn summarize_message(message: &str) -> String {
     shortened
 }
 
+fn build_git_commit_message(svn_message: &str) -> String {
+    format!("SVN: {}", svn_message.trim())
+}
+
 fn limit_logs(logs: Vec<crate::ops::SvnLog>, limit: Option<usize>) -> Vec<crate::ops::SvnLog> {
     match limit {
         Some(n) => logs.into_iter().take(n).collect(),
@@ -245,8 +255,8 @@ mod tests {
     };
 
     use super::{
-        MockSvnOperations, SyncRunOptions, SyncTool, has_conflict_entries, limit_logs,
-        summarize_message,
+        MockSvnOperations, SyncRunOptions, SyncTool, build_git_commit_message,
+        has_conflict_entries, limit_logs, summarize_message,
     };
 
     struct TestGitState {
@@ -588,5 +598,12 @@ mod tests {
     fn test_summarize_message() {
         assert_eq!(summarize_message(""), "(空提交说明)");
         assert_eq!(summarize_message("标题\n详情"), "标题");
+    }
+
+    #[test]
+    fn test_build_git_commit_message() {
+        assert_eq!(build_git_commit_message("修复bug"), "SVN: 修复bug");
+        assert_eq!(build_git_commit_message("  修复bug  "), "SVN: 修复bug");
+        assert_eq!(build_git_commit_message(""), "SVN: ");
     }
 }
