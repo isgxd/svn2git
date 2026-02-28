@@ -22,7 +22,7 @@ pub enum Commands {
     /// 同步命令
     #[command(
         about = "执行 SVN -> Git 同步",
-        long_about = "读取 SVN 日志并逐条更新工作副本，然后在 Git 中生成对应提交。"
+        long_about = "读取 SVN 日志并逐条更新工作副本，然后在 Git 中生成对应提交。\n\n防事故参数：\n- --dry-run: 只预览将要同步的日志，不做任何写操作\n- --limit N: 本次最多同步 N 条，便于小批量验证"
     )]
     Sync {
         #[arg(
@@ -43,6 +43,12 @@ pub enum Commands {
             long_help = "Git 仓库目录。\n- 与 --svn-dir 同时传入：直接使用这组配置同步\n- 交互输入时留空：默认使用 SVN 目录"
         )]
         git_dir: Option<PathBuf>,
+
+        #[arg(long, value_name = "N", help = "最多同步 N 条日志（按SVN返回顺序）")]
+        limit: Option<usize>,
+
+        #[arg(long, help = "仅预览同步计划，不执行写入操作")]
+        dry_run: bool,
     },
 
     /// 历史记录命令
@@ -85,9 +91,44 @@ mod tests {
         ]);
 
         match cli.command {
-            Commands::Sync { svn_dir, git_dir } => {
+            Commands::Sync {
+                svn_dir,
+                git_dir,
+                limit,
+                dry_run,
+            } => {
                 assert_eq!(svn_dir, Some(PathBuf::from("d:/svn")));
                 assert_eq!(git_dir, Some(PathBuf::from("d:/git")));
+                assert_eq!(limit, None);
+                assert!(!dry_run);
+            }
+            _ => panic!("应解析为 Sync 命令"),
+        }
+    }
+
+    #[test]
+    fn test_parse_sync_command_with_safety_options() {
+        let cli = Cli::parse_from([
+            "svn2git",
+            "sync",
+            "--limit",
+            "5",
+            "--dry-run",
+            "--svn-dir",
+            "d:/svn",
+        ]);
+
+        match cli.command {
+            Commands::Sync {
+                svn_dir,
+                git_dir,
+                limit,
+                dry_run,
+            } => {
+                assert_eq!(svn_dir, Some(PathBuf::from("d:/svn")));
+                assert_eq!(git_dir, None);
+                assert_eq!(limit, Some(5));
+                assert!(dry_run);
             }
             _ => panic!("应解析为 Sync 命令"),
         }

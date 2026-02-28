@@ -1,6 +1,6 @@
 use crate::{
     config::{FileStorage, HistoryManager, SyncConfig},
-    error::Result,
+    error::{Result, SyncError},
     interactor::{UserInteractor, confirm_sync_with_interactor},
     ops::{GitOperations, get_svn_logs, git_commit_with_ops, svn_update_to_rev},
 };
@@ -23,6 +23,15 @@ impl SvnOperations for RealSvnOperations {
     fn update_to_rev(&self, path: &std::path::Path, rev: &str) -> Result<()> {
         svn_update_to_rev(&path.to_path_buf(), rev)
     }
+}
+
+/// 同步运行选项（防事故）
+#[derive(Debug, Clone, Default)]
+pub struct SyncRunOptions {
+    /// 仅预览同步计划，不执行任何写入操作
+    pub dry_run: bool,
+    /// 最多同步多少条日志（按SVN返回顺序）
+    pub limit: Option<usize>,
 }
 
 /// 同步工具
@@ -96,35 +105,105 @@ impl<S: FileStorage> SyncTool<S> {
 
     /// 执行同步
     pub fn run(&self) -> Result<()> {
-        let svn_logs = self.svn_operations.get_logs(&self.config.svn_dir)?;
+        self.run_with_options(&SyncRunOptions::default())
+    }
+
+    /// 按选项执行同步
+    pub fn run_with_options(&self, options: &SyncRunOptions) -> Result<()> {
+        let mut svn_logs = self.svn_operations.get_logs(&self.config.svn_dir)?;
+        svn_logs = limit_logs(svn_logs, options.limit);
+
+        if svn_logs.is_empty() {
+            println!("没有可同步的 SVN 日志");
+            return Ok(());
+        }
+
+        if options.dry_run {
+            println!("dry-run 模式：仅预览，不会执行 svn update 或 git commit");
+            for log in &svn_logs {
+                println!("[预览] r{} -> SVN: {}", log.version, log.message);
+            }
+            return Ok(());
+        }
 
         if !confirm_sync_with_interactor(&svn_logs, self.interactor.as_ref()) {
             println!("同步已取消");
             return Ok(());
         }
 
-        for log in svn_logs.iter() {
+        for (idx, log) in svn_logs.iter().enumerate() {
             println!("准备更新到 SVN 版本：{}", log.version);
 
             self.svn_operations
-                .update_to_rev(&self.config.svn_dir, &log.version)?;
+                .update_to_rev(&self.config.svn_dir, &log.version)
+                .map_err(|e| {
+                    SyncError::App(format!(
+                        "同步第 {} 条日志失败（SVN r{}）：{}",
+                        idx + 1,
+                        log.version,
+                        e
+                    ))
+                })?;
             println!("更新完成");
+
+            self.ensure_git_conflict_free().map_err(|e| {
+                SyncError::App(format!(
+                    "同步第 {} 条日志失败（SVN r{}）：{}",
+                    idx + 1,
+                    log.version,
+                    e
+                ))
+            })?;
 
             git_commit_with_ops(
                 self.git_operations.as_ref(),
                 &self.config.git_dir,
                 &format!("SVN: {}", &log.message),
-            )?;
+            )
+            .map_err(|e| {
+                SyncError::App(format!(
+                    "同步第 {} 条日志失败（SVN r{}）：{}",
+                    idx + 1,
+                    log.version,
+                    e
+                ))
+            })?;
             println!("提交到 Git：{}", log.message);
         }
 
         self.history.save()
     }
+
+    fn ensure_git_conflict_free(&self) -> Result<()> {
+        let status = self.git_operations.status(&self.config.git_dir)?;
+        if has_conflict_entries(&status) {
+            return Err(SyncError::App(
+                "检测到 Git 冲突状态（如 UU/AA/DU），已停止后续同步".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn limit_logs(logs: Vec<crate::ops::SvnLog>, limit: Option<usize>) -> Vec<crate::ops::SvnLog> {
+    match limit {
+        Some(n) => logs.into_iter().take(n).collect(),
+        None => logs,
+    }
+}
+
+fn has_conflict_entries(status: &str) -> bool {
+    status.lines().any(|line| {
+        if line.len() < 2 {
+            return false;
+        }
+        matches!(&line[..2], "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, path::Path, path::PathBuf, str::FromStr};
+    use std::{cell::RefCell, path::Path, path::PathBuf, rc::Rc, str::FromStr};
 
     use crate::{
         config::{HistoryManager, MockFileStorage, SyncConfig},
@@ -133,19 +212,33 @@ mod tests {
         ops::{GitOperations, SvnLog},
     };
 
-    use super::{MockSvnOperations, SyncTool};
+    use super::{MockSvnOperations, SyncRunOptions, SyncTool, has_conflict_entries, limit_logs};
+
+    struct TestGitState {
+        add_all_calls: usize,
+        commit_messages: Vec<String>,
+        status_calls: usize,
+        status_output: String,
+    }
 
     struct TestGitOperations {
-        add_all_calls: RefCell<Vec<PathBuf>>,
-        commit_messages: RefCell<Vec<String>>,
+        state: Rc<RefCell<TestGitState>>,
     }
 
     impl TestGitOperations {
-        fn new() -> Self {
-            Self {
-                add_all_calls: RefCell::new(Vec::new()),
-                commit_messages: RefCell::new(Vec::new()),
-            }
+        fn new(status_output: &str) -> (Self, Rc<RefCell<TestGitState>>) {
+            let state = Rc::new(RefCell::new(TestGitState {
+                add_all_calls: 0,
+                commit_messages: Vec::new(),
+                status_calls: 0,
+                status_output: status_output.to_string(),
+            }));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
         }
     }
 
@@ -159,17 +252,23 @@ mod tests {
         }
 
         fn add_all(&self, path: &Path) -> crate::error::Result<()> {
-            self.add_all_calls.borrow_mut().push(path.to_path_buf());
+            let _ = path;
+            self.state.borrow_mut().add_all_calls += 1;
             Ok(())
         }
 
         fn commit(&self, _path: &Path, message: &str) -> crate::error::Result<()> {
-            self.commit_messages.borrow_mut().push(message.to_string());
+            self.state
+                .borrow_mut()
+                .commit_messages
+                .push(message.to_string());
             Ok(())
         }
 
         fn status(&self, _path: &Path) -> crate::error::Result<String> {
-            Ok(String::new())
+            let mut state = self.state.borrow_mut();
+            state.status_calls += 1;
+            Ok(state.status_output.clone())
         }
 
         fn log(&self, _path: &Path, _count: Option<usize>) -> crate::error::Result<String> {
@@ -226,7 +325,8 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(()));
 
-        let git_ops = Box::new(TestGitOperations::new());
+        let (git_ops_impl, git_state) = TestGitOperations::new("");
+        let git_ops = Box::new(git_ops_impl);
         let tool = SyncTool::with_svn_operations(
             config,
             history,
@@ -237,6 +337,8 @@ mod tests {
 
         let result = tool.run();
         assert!(result.is_ok());
+        assert_eq!(git_state.borrow().add_all_calls, 2);
+        assert_eq!(git_state.borrow().commit_messages.len(), 2);
     }
 
     #[test]
@@ -256,7 +358,8 @@ mod tests {
         });
         svn_ops.expect_update_to_rev().times(0);
 
-        let git_ops = Box::new(TestGitOperations::new());
+        let (git_ops_impl, git_state) = TestGitOperations::new("");
+        let git_ops = Box::new(git_ops_impl);
         let tool = SyncTool::with_svn_operations(
             config,
             history,
@@ -267,6 +370,7 @@ mod tests {
 
         let result = tool.run();
         assert!(result.is_ok());
+        assert_eq!(git_state.borrow().add_all_calls, 0);
     }
 
     #[test]
@@ -289,7 +393,8 @@ mod tests {
             .times(1)
             .returning(|_, _| Err(SyncError::App("svn update failed".into())));
 
-        let git_ops = Box::new(TestGitOperations::new());
+        let (git_ops_impl, git_state) = TestGitOperations::new("");
+        let git_ops = Box::new(git_ops_impl);
         let tool = SyncTool::with_svn_operations(
             config,
             history,
@@ -300,5 +405,147 @@ mod tests {
 
         let result = tool.run();
         assert!(result.is_err());
+        assert_eq!(git_state.borrow().add_all_calls, 0);
+    }
+
+    #[test]
+    fn test_run_dry_run_should_not_update_or_commit_or_save() {
+        let config = create_config();
+        let history = create_history_manager(0);
+
+        let mut interactor = MockUserInteractor::new();
+        interactor.expect_confirm_sync().times(0);
+
+        let mut svn_ops = MockSvnOperations::new();
+        svn_ops.expect_get_logs().returning(|_| {
+            Ok(vec![SvnLog {
+                version: "11".into(),
+                message: "dry run".into(),
+            }])
+        });
+        svn_ops.expect_update_to_rev().times(0);
+
+        let (git_ops_impl, git_state) = TestGitOperations::new("");
+        let tool = SyncTool::with_svn_operations(
+            config,
+            history,
+            Box::new(interactor),
+            Box::new(git_ops_impl),
+            Box::new(svn_ops),
+        );
+
+        let result = tool.run_with_options(&SyncRunOptions {
+            dry_run: true,
+            limit: None,
+        });
+        assert!(result.is_ok());
+        assert_eq!(git_state.borrow().add_all_calls, 0);
+        assert_eq!(git_state.borrow().commit_messages.len(), 0);
+        assert_eq!(git_state.borrow().status_calls, 0);
+    }
+
+    #[test]
+    fn test_run_limit_should_only_process_first_n_logs() {
+        let config = create_config();
+        let history = create_history_manager(1);
+
+        let mut interactor = MockUserInteractor::new();
+        interactor.expect_confirm_sync().returning(|_| true);
+
+        let mut svn_ops = MockSvnOperations::new();
+        svn_ops.expect_get_logs().returning(|_| {
+            Ok(vec![
+                SvnLog {
+                    version: "1".into(),
+                    message: "m1".into(),
+                },
+                SvnLog {
+                    version: "2".into(),
+                    message: "m2".into(),
+                },
+            ])
+        });
+        svn_ops
+            .expect_update_to_rev()
+            .times(1)
+            .returning(|_, _| Ok(()));
+
+        let (git_ops_impl, git_state) = TestGitOperations::new("");
+        let tool = SyncTool::with_svn_operations(
+            config,
+            history,
+            Box::new(interactor),
+            Box::new(git_ops_impl),
+            Box::new(svn_ops),
+        );
+
+        let result = tool.run_with_options(&SyncRunOptions {
+            dry_run: false,
+            limit: Some(1),
+        });
+        assert!(result.is_ok());
+        assert_eq!(git_state.borrow().add_all_calls, 1);
+        assert_eq!(git_state.borrow().commit_messages, vec!["SVN: m1"]);
+    }
+
+    #[test]
+    fn test_run_should_stop_when_git_conflict_detected() {
+        let config = create_config();
+        let history = create_history_manager(0);
+
+        let mut interactor = MockUserInteractor::new();
+        interactor.expect_confirm_sync().returning(|_| true);
+
+        let mut svn_ops = MockSvnOperations::new();
+        svn_ops.expect_get_logs().returning(|_| {
+            Ok(vec![SvnLog {
+                version: "5".into(),
+                message: "conflict".into(),
+            }])
+        });
+        svn_ops
+            .expect_update_to_rev()
+            .times(1)
+            .returning(|_, _| Ok(()));
+
+        let (git_ops_impl, git_state) = TestGitOperations::new("UU conflict.txt");
+        let tool = SyncTool::with_svn_operations(
+            config,
+            history,
+            Box::new(interactor),
+            Box::new(git_ops_impl),
+            Box::new(svn_ops),
+        );
+
+        let result = tool.run();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("检测到 Git 冲突状态"));
+        assert_eq!(git_state.borrow().status_calls, 1);
+        assert_eq!(git_state.borrow().add_all_calls, 0);
+    }
+
+    #[test]
+    fn test_has_conflict_entries() {
+        assert!(has_conflict_entries("UU file.txt"));
+        assert!(has_conflict_entries("AA file.txt"));
+        assert!(!has_conflict_entries("?? file.txt\n M file2.txt"));
+    }
+
+    #[test]
+    fn test_limit_logs() {
+        let logs = vec![
+            SvnLog {
+                version: "1".into(),
+                message: "a".into(),
+            },
+            SvnLog {
+                version: "2".into(),
+                message: "b".into(),
+            },
+        ];
+        let limited = limit_logs(logs, Some(1));
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].version, "1");
     }
 }
