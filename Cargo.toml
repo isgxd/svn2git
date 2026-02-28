@@ -14,7 +14,7 @@ roxmltree = "0.21"
 
 
 [dev-dependencies]
-mockall = "0.13"
+mockall = "0.14"
 tempfile = "3"
 
 [profile.release]
