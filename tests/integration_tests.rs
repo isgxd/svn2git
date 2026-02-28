@@ -105,7 +105,7 @@ fn test_mock_git_multiple_commits_flow() {
         .expect("配置Git用户信息失败");
 
     // 模拟多次提交
-    let commits = vec![("1", "初始提交"), ("2", "添加功能"), ("3", "修复bug")];
+    let commits = [("1", "初始提交"), ("2", "添加功能"), ("3", "修复bug")];
 
     for (version, message) in commits.iter() {
         let file_path = format!("svn_r{}.txt", version);
@@ -118,7 +118,7 @@ fn test_mock_git_multiple_commits_flow() {
         // 使用与sync.rs相同的提交格式
         let commit_message = format!("SVN: {}", message);
         git_commit_with_ops(&git_ops, &config.git_dir, &commit_message)
-            .expect(&format!("SVN同步提交失败: r{}", version));
+            .unwrap_or_else(|_| panic!("SVN同步提交失败: r{}", version));
 
         println!("✅ 提交成功: r{} - {}", version, message);
     }

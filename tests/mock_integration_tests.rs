@@ -125,10 +125,8 @@ impl GitOperations for TestMockGitOperations {
             if !repo.initialized {
                 return Err(SyncError::App("Git仓库未初始化".to_string()));
             }
-            if repo.files.is_empty() && repo.commits.is_empty() {
-                Ok(String::new()) // 空仓库，工作目录干净
-            } else if repo.files.is_empty() {
-                Ok(String::new()) // 只有提交历史，没有未跟踪文件
+            if repo.files.is_empty() {
+                Ok(String::new()) // 无未跟踪文件，工作目录干净
             } else {
                 Ok("?? some_untracked_file.txt\n".to_string()) // 有未跟踪文件
             }
@@ -292,7 +290,7 @@ fn test_mock_git_multiple_commits_flow() {
         .expect("配置Git用户信息失败");
 
     // 模拟多次提交
-    let commits = vec![
+    let commits = [
         ("初始提交", "README.md"),
         ("添加源代码", "src/main.rs"),
         ("修复bug", "src/bugfix.rs"),
@@ -310,7 +308,8 @@ fn test_mock_git_multiple_commits_flow() {
         git_ops.add_file_to_mock(&git_dir, file);
 
         // 使用重构后的git_commit_with_ops函数提交
-        git_commit_with_ops(&git_ops, &git_dir, message).expect(&format!("提交失败: {}", message));
+        git_commit_with_ops(&git_ops, &git_dir, message)
+            .unwrap_or_else(|_| panic!("提交失败: {}", message));
 
         println!("✅ 提交成功: {}", message);
     }
@@ -368,7 +367,7 @@ fn test_mock_git_svn_sync_scenario() {
         // 使用与sync.rs相同的提交格式
         let commit_message = format!("SVN: {}", message);
         git_commit_with_ops(&git_ops, &git_dir, &commit_message)
-            .expect(&format!("SVN同步提交失败: r{}", version));
+            .unwrap_or_else(|_| panic!("SVN同步提交失败: r{}", version));
 
         println!("✅ SVN同步提交成功: r{} - {}", version, message);
     }

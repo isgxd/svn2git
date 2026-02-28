@@ -157,7 +157,12 @@ fn select_or_create_config<S: FileStorage>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::MockFileStorage, interactor::MockUserInteractor};
+    use std::path::PathBuf;
+
+    use crate::{
+        config::{HistoryRecord, MockFileStorage},
+        interactor::MockUserInteractor,
+    };
 
     use super::*;
 
@@ -180,5 +185,56 @@ mod tests {
         let config = select_or_create_config(None, None, &mut history, &interactor).unwrap();
         assert_eq!(config.svn_dir, PathBuf::from_str("s").unwrap());
         assert_eq!(config.git_dir, PathBuf::from_str("s").unwrap());
+    }
+
+    #[test]
+    fn test_select_or_create_config_with_cli_paths_should_not_require_input() {
+        let mut storage = MockFileStorage::new();
+        storage.expect_load().returning(|| Ok(vec![]));
+        storage.expect_save().returning(|_| Ok(()));
+        let mut history = HistoryManager::new(storage).unwrap();
+
+        let mut interactor = MockUserInteractor::new();
+        interactor.expect_input_svn_dir().times(0);
+        interactor.expect_input_git_dir().times(0);
+        interactor.expect_select_history_record().times(0);
+
+        let svn = PathBuf::from_str("svn_from_cli").unwrap();
+        let git = PathBuf::from_str("git_from_cli").unwrap();
+        let config = select_or_create_config(
+            Some(svn.clone()),
+            Some(git.clone()),
+            &mut history,
+            &interactor,
+        )
+        .unwrap();
+
+        assert_eq!(config.svn_dir, svn);
+        assert_eq!(config.git_dir, git);
+    }
+
+    #[test]
+    fn test_select_or_create_config_should_select_history_when_exists() {
+        let mut storage = MockFileStorage::new();
+        storage.expect_load().returning(|| {
+            Ok(vec![HistoryRecord::new(
+                1,
+                PathBuf::from("svn_history"),
+                PathBuf::from("git_history"),
+            )])
+        });
+        storage.expect_save().returning(|_| Ok(()));
+        let mut history = HistoryManager::new(storage).unwrap();
+
+        let mut interactor = MockUserInteractor::new();
+        interactor
+            .expect_select_history_record()
+            .returning(|_| Ok(0));
+        interactor.expect_input_svn_dir().times(0);
+        interactor.expect_input_git_dir().times(0);
+
+        let config = select_or_create_config(None, None, &mut history, &interactor).unwrap();
+        assert_eq!(config.svn_dir, PathBuf::from("svn_history"));
+        assert_eq!(config.git_dir, PathBuf::from("git_history"));
     }
 }

@@ -1,62 +1,31 @@
 //! 改进的Git提交功能测试
 //!
-//! 测试修复后的git_commit函数
+//! 使用Mock验证提交逻辑，不依赖真实git命令
 
 mod common;
 
 use common::*;
-use std::process::Command;
+use svn2git::{GitOperations, MockGitOperations, git_commit_with_ops};
 
-/// 测试：改进后的git_commit应该能处理新文件
+/// 测试：提交逻辑应该能处理新文件（纯Mock）
 #[test]
-fn test_improved_git_commit_can_handle_new_files() {
+fn test_improved_git_commit_can_handle_new_files_without_real_git() {
     let (_temp_dir, _svn_dir, git_dir) = create_test_dirs();
+    let git_ops = MockGitOperations::new();
 
-    // 初始化Git仓库
-    Command::new("git")
-        .arg("init")
-        .current_dir(&git_dir)
-        .output()
-        .expect("初始化Git仓库失败");
+    git_ops.init(&git_dir).expect("初始化Mock Git仓库失败");
+    git_ops
+        .config_user(&git_dir, "测试用户", "test@example.com")
+        .expect("配置Mock Git用户失败");
+    git_ops
+        .add_file_to_mock(&git_dir, "new_file.txt")
+        .expect("添加Mock文件失败");
 
-    // 配置Git用户信息
-    Command::new("git")
-        .args(&["config", "user.name", "测试用户"])
-        .current_dir(&git_dir)
-        .output()
-        .expect("配置Git用户名失败");
+    let status_output = git_ops.status(&git_dir).expect("获取Mock Git状态失败");
+    assert!(!status_output.trim().is_empty(), "提交前应有待处理变更");
 
-    Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
-        .current_dir(&git_dir)
-        .output()
-        .expect("配置Git邮箱失败");
+    let commit_result = git_commit_with_ops(&git_ops, &git_dir, "测试提交新文件");
 
-    // 创建一个新的未跟踪文件
-    let test_file = git_dir.join("new_file.txt");
-    std::fs::write(&test_file, "新文件内容").expect("创建测试文件失败");
-
-    // 检查Git状态，确认文件是未跟踪的
-    let status_output = Command::new("git")
-        .args(&["status", "--porcelain"])
-        .current_dir(&git_dir)
-        .output()
-        .expect("获取Git状态失败");
-
-    let status_output_str = String::from_utf8_lossy(&status_output.stdout);
-    println!("Git状态输出:\n{}", status_output_str);
-
-    // 验证文件是未跟踪的（以??开头）
-    assert!(
-        status_output_str.contains("?? new_file.txt"),
-        "新文件应该是未跟踪状态，但实际状态是: {}",
-        status_output_str
-    );
-
-    // 尝试使用改进后的git_commit_real函数提交
-    let commit_result = svn2git::git_commit_real(&git_dir, "测试提交新文件");
-
-    // 期望：改进后的实现应该成功
     assert!(
         commit_result.is_ok(),
         "改进后的git_commit应该能成功提交新文件"
@@ -67,39 +36,21 @@ fn test_improved_git_commit_can_handle_new_files() {
         panic!("测试失败：改进后的git_commit仍然无法提交新文件");
     }
 
-    // 再次检查Git状态，应该是干净的
-    let status_after_commit_output = Command::new("git")
-        .args(&["status", "--porcelain"])
-        .current_dir(&git_dir)
-        .output()
-        .expect("获取提交后Git状态失败");
-
-    let status_after_commit_str = String::from_utf8_lossy(&status_after_commit_output.stdout);
-    println!("提交后Git状态:\n{}", status_after_commit_str);
-
-    // 验证工作目录是干净的
+    let status_after_commit_str = git_ops
+        .status(&git_dir)
+        .expect("获取提交后Mock Git状态失败");
     assert!(
         status_after_commit_str.trim().is_empty(),
         "提交后工作目录应该是干净的，但实际状态是: {}",
         status_after_commit_str
     );
 
-    // 检查提交历史，应该有我们的提交
-    let log_output = Command::new("git")
-        .args(&["log", "--oneline", "-1"])
-        .current_dir(&git_dir)
-        .output()
-        .expect("获取Git日志失败");
-
-    let log_str = String::from_utf8_lossy(&log_output.stdout);
-    println!("最新提交:\n{}", log_str);
-
-    // 验证提交存在且包含我们的提交信息
+    let log_str = git_ops
+        .log(&git_dir, Some(1))
+        .expect("获取Mock Git日志失败");
     assert!(!log_str.trim().is_empty(), "应该有提交记录");
     assert!(
-        log_str.contains("测试提交新文件") || log_str.contains("test commit"),
+        log_str.contains("测试提交新文件"),
         "提交信息应该包含我们的消息"
     );
-
-    println!("✅ 测试通过：改进后的git_commit能正确处理新文件");
 }

@@ -2,7 +2,7 @@
 //!
 //! 提供创建测试场景的工厂函数，简化测试代码编写
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use svn2git::{GitOperations, MockGitOperations};
 use tempfile::TempDir;
@@ -110,7 +110,7 @@ impl TestFactory {
             git_ops.add_all(&git_dir).expect("添加文件到暂存区失败");
             git_ops
                 .commit(&git_dir, commit_message)
-                .expect(&format!("提交失败: {}", commit_message));
+                .unwrap_or_else(|_| panic!("提交失败: {}", commit_message));
         }
 
         (temp_dir, git_dir, git_ops)
@@ -165,7 +165,7 @@ impl TestFactory {
             git_ops.add_all(&git_dir).expect("添加同步文件失败");
             git_ops
                 .commit(&git_dir, &commit_message)
-                .expect(&format!("SVN同步提交失败: r{}", version));
+                .unwrap_or_else(|_| panic!("SVN同步提交失败: r{}", version));
         }
 
         (temp_dir, git_dir, svn_dir, git_ops)
@@ -190,7 +190,7 @@ impl TestFactory {
     /// ```
     pub fn assert_git_state(
         git_ops: &MockGitOperations,
-        git_dir: &PathBuf,
+        git_dir: &Path,
         expected_commits: Vec<&str>,
         should_be_clean: bool,
     ) {

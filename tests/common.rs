@@ -18,9 +18,9 @@ pub fn create_test_dirs() -> (TempDir, PathBuf, PathBuf) {
     (temp_dir, svn_dir, git_dir)
 }
 
-/// 创建测试用的SVN日志
-///
-/// 注意：这个函数会在我们修改SvnLog结构体后更新
+// 创建测试用的SVN日志
+//
+// 注意：这个函数会在我们修改SvnLog结构体后更新
 // pub fn create_test_svn_log_simple() -> Vec<SvnLog> {
 //     vec![
 //         SvnLog {

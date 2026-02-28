@@ -115,3 +115,73 @@ pub fn svn_update_to_rev(path: &PathBuf, rev: &str) -> Result<()> {
     println!("SVN 更新到 {rev} 成功");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_svn_log_xml;
+
+    #[test]
+    fn test_parse_svn_log_xml_success() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<log>
+  <logentry revision="101">
+    <msg> first commit </msg>
+  </logentry>
+  <logentry revision="102">
+    <msg>second commit</msg>
+  </logentry>
+</log>"#;
+
+        let result = parse_svn_log_xml(xml).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].version, "101");
+        assert_eq!(result[0].message, "first commit");
+        assert_eq!(result[1].version, "102");
+        assert_eq!(result[1].message, "second commit");
+    }
+
+    #[test]
+    fn test_parse_svn_log_xml_should_fail_when_root_invalid() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<invalid>
+  <logentry revision="1">
+    <msg>commit</msg>
+  </logentry>
+</invalid>"#;
+
+        let result = parse_svn_log_xml(xml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("无效的 XML 根"));
+    }
+
+    #[test]
+    fn test_parse_svn_log_xml_should_fail_when_revision_missing() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<log>
+  <logentry>
+    <msg>commit without revision</msg>
+  </logentry>
+</log>"#;
+
+        let result = parse_svn_log_xml(xml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("缺少 revision"));
+    }
+
+    #[test]
+    fn test_parse_svn_log_xml_allows_empty_message() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<log>
+  <logentry revision="200">
+    <msg>   </msg>
+  </logentry>
+</log>"#;
+
+        let result = parse_svn_log_xml(xml).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].version, "200");
+        assert!(result[0].message.is_empty());
+    }
+}
