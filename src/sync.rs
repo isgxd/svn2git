@@ -224,7 +224,12 @@ fn summarize_message(message: &str) -> String {
 }
 
 fn build_git_commit_message(svn_message: &str) -> String {
-    format!("SVN: {}", svn_message.trim())
+    let trimmed = svn_message.trim();
+    if trimmed.is_empty() {
+        "SVN: <空>".to_string()
+    } else {
+        format!("SVN: {trimmed}")
+    }
 }
 
 fn limit_logs(logs: Vec<crate::ops::SvnLog>, limit: Option<usize>) -> Vec<crate::ops::SvnLog> {
@@ -604,6 +609,7 @@ mod tests {
     fn test_build_git_commit_message() {
         assert_eq!(build_git_commit_message("修复bug"), "SVN: 修复bug");
         assert_eq!(build_git_commit_message("  修复bug  "), "SVN: 修复bug");
-        assert_eq!(build_git_commit_message(""), "SVN: ");
+        assert_eq!(build_git_commit_message(""), "SVN: <空>");
+        assert_eq!(build_git_commit_message("   "), "SVN: <空>");
     }
 }
