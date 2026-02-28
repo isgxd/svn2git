@@ -119,9 +119,18 @@ impl<S: FileStorage> SyncTool<S> {
         }
 
         if options.dry_run {
-            println!("dry-run 模式：仅预览，不会执行 svn update 或 git commit");
-            for log in &svn_logs {
-                println!("[预览] r{} -> SVN: {}", log.version, log.message);
+            println!(
+                "dry-run 模式：共 {} 条日志，仅预览，不会执行 svn update 或 git commit",
+                svn_logs.len()
+            );
+            for (idx, log) in svn_logs.iter().enumerate() {
+                println!(
+                    "[预览 {}/{}] r{} | {}",
+                    idx + 1,
+                    svn_logs.len(),
+                    log.version,
+                    summarize_message(&log.message)
+                );
             }
             return Ok(());
         }
@@ -132,7 +141,13 @@ impl<S: FileStorage> SyncTool<S> {
         }
 
         for (idx, log) in svn_logs.iter().enumerate() {
-            println!("准备更新到 SVN 版本：{}", log.version);
+            println!(
+                "[{}/{}] 准备同步 SVN r{}：{}",
+                idx + 1,
+                svn_logs.len(),
+                log.version,
+                summarize_message(&log.message)
+            );
 
             self.svn_operations
                 .update_to_rev(&self.config.svn_dir, &log.version)
@@ -144,7 +159,7 @@ impl<S: FileStorage> SyncTool<S> {
                         e
                     ))
                 })?;
-            println!("更新完成");
+            println!("[{}/{}] SVN 更新完成", idx + 1, svn_logs.len());
 
             self.ensure_git_conflict_free().map_err(|e| {
                 SyncError::App(format!(
@@ -168,7 +183,7 @@ impl<S: FileStorage> SyncTool<S> {
                     e
                 ))
             })?;
-            println!("提交到 Git：{}", log.message);
+            println!("[{}/{}] Git 提交完成", idx + 1, svn_logs.len());
         }
 
         self.history.save()
@@ -183,6 +198,23 @@ impl<S: FileStorage> SyncTool<S> {
         }
         Ok(())
     }
+}
+
+fn summarize_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "(空提交说明)".to_string();
+    }
+
+    let first_line = trimmed.lines().next().unwrap_or_default().trim();
+    const MAX_CHARS: usize = 80;
+    if first_line.chars().count() <= MAX_CHARS {
+        return first_line.to_string();
+    }
+
+    let mut shortened: String = first_line.chars().take(MAX_CHARS).collect();
+    shortened.push_str("...");
+    shortened
 }
 
 fn limit_logs(logs: Vec<crate::ops::SvnLog>, limit: Option<usize>) -> Vec<crate::ops::SvnLog> {
@@ -212,7 +244,10 @@ mod tests {
         ops::{GitOperations, SvnLog},
     };
 
-    use super::{MockSvnOperations, SyncRunOptions, SyncTool, has_conflict_entries, limit_logs};
+    use super::{
+        MockSvnOperations, SyncRunOptions, SyncTool, has_conflict_entries, limit_logs,
+        summarize_message,
+    };
 
     struct TestGitState {
         add_all_calls: usize,
@@ -547,5 +582,11 @@ mod tests {
         let limited = limit_logs(logs, Some(1));
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].version, "1");
+    }
+
+    #[test]
+    fn test_summarize_message() {
+        assert_eq!(summarize_message(""), "(空提交说明)");
+        assert_eq!(summarize_message("标题\n详情"), "标题");
     }
 }

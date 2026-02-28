@@ -66,12 +66,20 @@ impl UserInteractor for DefaultUserInteractor {
     }
 
     fn confirm_sync(&self, svn_logs: &[SvnLog]) -> bool {
-        println!("SVN 更新日志：");
-        for log in svn_logs {
-            println!("{log:?}");
+        println!("检测到 {} 条 SVN 日志：", svn_logs.len());
+        for (idx, log) in svn_logs.iter().enumerate() {
+            println!(
+                "  {:>3}. r{} | {}",
+                idx + 1,
+                log.version,
+                summarize_message(&log.message)
+            );
         }
 
-        match Confirm::new("是否执行同步？").with_default(false).prompt() {
+        match Confirm::new("是否开始执行同步？")
+            .with_default(false)
+            .prompt()
+        {
             Ok(confirm) => confirm,
             Err(e) => {
                 eprintln!("询问是否同步时出现错误：{e}");
@@ -80,6 +88,23 @@ impl UserInteractor for DefaultUserInteractor {
             }
         }
     }
+}
+
+fn summarize_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "(空提交说明)".to_string();
+    }
+
+    let first_line = trimmed.lines().next().unwrap_or_default().trim();
+    const MAX_CHARS: usize = 80;
+    if first_line.chars().count() <= MAX_CHARS {
+        return first_line.to_string();
+    }
+
+    let mut shortened: String = first_line.chars().take(MAX_CHARS).collect();
+    shortened.push_str("...");
+    shortened
 }
 
 /// 测试用Mock用户交互器，用于测试
@@ -218,5 +243,16 @@ mod tests {
 
         let result = interactor.confirm_sync(&svn_logs);
         assert!(!result);
+    }
+
+    #[test]
+    fn test_summarize_message_with_empty_message() {
+        assert_eq!(summarize_message("   "), "(空提交说明)");
+    }
+
+    #[test]
+    fn test_summarize_message_with_multiline_message() {
+        let msg = "第一行\n第二行";
+        assert_eq!(summarize_message(msg), "第一行");
     }
 }
